@@ -1,16 +1,22 @@
 """
 MMT Compatibility and Stabilization Mechanisms
 
-Implements Section 11:
-- Operational budget constraint: G + i*D_{-1} = T + ΔD + ΔH
-- Inflation as capacity phenomenon: π = β_0 + β_1*(Y/Y_pot) + β_2*T_E + β_3*T_C + β_4*E[π_{t+1}]
-- Enhanced automatic stabilizer: G = G_bar - α*(Y-Y_pot) + δ*T_adj - γ*I_crisis
-- Employer of Last Resort: L_ELR = max(0, L_target - L_private)
+Implements Section 7 of the paper "Coupled Economic Phases Model":
+
+Key equations:
+- Operational budget constraint: G_t + i_t·D_{t-1} = T_t + ΔD_t + ΔH_t
+- Inflation as capacity phenomenon: π_t = β_0 + β_1·(Y_t/Y_pot) + β_2·T_E + β_3·T_C + β_4·E_t[π_{t+1}]
+- Enhanced automatic stabilizers: G_t = Ḡ - α(Y_t - Y_pot) + δ·T_adj - γ·I{Crisis}
+- Employer of Last Resort: L^ELR_t = max(0, L_target - L^private_t)
 
 Key MMT insights incorporated:
-1. Limits are real (resources, productivity), not purely financial
-2. Inflation emerges from structural tensions and capacity constraints
-3. Government acts as system stabilizer
+1. Economic limits are REAL (resources, productive capacity), not financial
+2. Inflation stems from STRUCTURAL BOTTLENECKS, not monetary expansion per se
+3. The state acts as SYSTEMIC STABILIZER and employer of last resort
+4. Especially crucial in asymmetric monetary unions (e.g., Eurozone)
+
+Simulation confirms: fiscal deficits sustainable below 95% capacity utilization;
+inflation spikes only when capacity is saturated AND structural tensions are high.
 """
 
 from dataclasses import dataclass, field

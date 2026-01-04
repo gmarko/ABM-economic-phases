@@ -1,8 +1,10 @@
 """
-Analysis module for stability and bifurcation analysis.
+Analysis module for stability, bifurcation, and comparative country analysis.
 
-Implements Jacobian computation, eigenvalue analysis, and bifurcation detection
-as specified in Section 3 of the JEDC paper.
+Implements:
+- Jacobian computation, eigenvalue analysis, and bifurcation detection (Section 3)
+- Country-specific calibration profiles (Section 6.3)
+- Cross-country comparative analysis tools
 """
 
 from .stability import (
@@ -13,10 +15,33 @@ from .stability import (
     analyze_eigenvalues,
 )
 
+from .country_profiles import (
+    CountryProfile,
+    CountryComparator,
+    COUNTRY_PROFILES,
+    SPAIN,
+    GERMANY,
+    FRANCE,
+    UK,
+    USA,
+    CHINA,
+)
+
 __all__ = [
+    # Stability analysis
     'JacobianAnalyzer',
     'StabilityResult',
     'BifurcationAnalyzer',
     'compute_numerical_jacobian',
     'analyze_eigenvalues',
+    # Country profiles
+    'CountryProfile',
+    'CountryComparator',
+    'COUNTRY_PROFILES',
+    'SPAIN',
+    'GERMANY',
+    'FRANCE',
+    'UK',
+    'USA',
+    'CHINA',
 ]

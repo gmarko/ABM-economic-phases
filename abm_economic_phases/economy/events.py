@@ -1,15 +1,17 @@
 """
 Extreme Events: Black Swans and Unicorns
 
-Implements Section 5.2:
+Implements Section 4.4 from "Coupled Economic Phases Model" paper:
 - Non-homogeneous Poisson process for event arrival
-- Black Swan (negative) impact function with threshold amplification
-- Unicorn (positive) impact with abundance paradox
+- Black Swan (negative) impact function with tension amplification
+- Unicorn (positive) impact with abundance paradox (Dutch Disease, bubbles, institutional capture)
 
-Key equations:
-- Event rate: λ(t) = λ_0 * [1 + κ * tanh(T_adjusted(t) / T_crit)]
-- Negative impact: Impact_neg = ξ * [1 + β * T_adj / (1 + exp(-α(ξ - ξ_0)))]
-- Positive impact: Impact_pos = ξ * exp(-(ξ - κ_abs)²/(2σ²)) - Ω * I{ξ > φ*κ_abs}
+Key equations from the paper:
+- Event rate: λ(t) = λ_0 · [1 + κ · tanh(T_adj(t) / T_crit)]
+- Black Swan: Impact_neg(ξ,t) = ξ · [1 + β · T_adj(t)] · σ(ξ - ξ_0)
+- Unicorn: Impact_pos(ξ,t) = ξ · exp(-(ξ - κ_abs(t))²/(2σ²)) - Ω(t) · I{ξ > φ·κ_abs(t)}
+- Absorption: κ_abs(t) = κ_0 + γ · M_macro(t) · A_t
+- Abundance penalty: Ω(t) = ω_0 + ω_1 · T_F(t) + ω_2 · (1 - θ_t)
 """
 
 from enum import Enum
@@ -189,7 +191,7 @@ class ExtremeEventGenerator:
             )
         else:
             event = self._generate_unicorn(
-                t_adjusted, macro_memory, coupling, sectoral_coherence
+                t_adjusted, macro_memory, coupling, sectoral_coherence, financial_tension
             )
 
         event.timestamp = len(self.event_history)
@@ -206,21 +208,27 @@ class ExtremeEventGenerator:
         """
         Generate a Black Swan (negative) event.
 
-        Impact_neg(ξ, t) = ξ * [1 + β * T_adj / (1 + exp(-α(ξ - ξ_0)))]
+        Paper equation:
+        Impact_neg(ξ, t) = ξ · [1 + β · T_adj(t)] · σ(ξ - ξ_0)
+
+        where σ is a sigmoid activation that amplifies when shock exceeds threshold.
+        This captures: larger tensions amplify negative shocks more severely.
         """
-        # Raw magnitude (negative)
-        xi = -self.rng.exponential(0.05)  # Exponential for heavy tails
+        # Raw magnitude (negative) - exponential for heavy tails
+        xi = -self.rng.exponential(0.05)
         xi = max(-0.5, xi)  # Cap at -50% shock
 
-        # Compute amplification from Equation (11)
-        threshold_effect = 1 / (
-            1 + np.exp(-self.params.alpha_threshold * (xi - self.params.xi_0))
+        # Sigmoid threshold effect: σ(ξ - ξ_0)
+        # Activates strongly when |ξ| > |ξ_0|
+        sigmoid_effect = 1 / (
+            1 + np.exp(-self.params.alpha_threshold * (abs(xi) - abs(self.params.xi_0)))
         )
-        amplification = 1 + self.params.beta_amplification * t_adjusted * threshold_effect
 
+        # Paper formula: Impact = ξ · [1 + β · T_adj] · σ(ξ - ξ_0)
+        amplification = (1 + self.params.beta_amplification * t_adjusted) * sigmoid_effect
         effective_impact = xi * amplification
 
-        # Determine primary tension affected
+        # Determine primary tension affected based on current state
         if financial_tension > 0.5:
             tension_target = "financial"
         elif t_adjusted > 0.6:
@@ -233,7 +241,7 @@ class ExtremeEventGenerator:
             magnitude=xi,
             effective_impact=effective_impact,
             tension_target=tension_target,
-            description=f"Negative shock: {xi:.2%} raw, {effective_impact:.2%} effective",
+            description=f"Black Swan: {xi:.2%} raw, {effective_impact:.2%} effective (T_adj={t_adjusted:.2f})",
         )
 
     def _generate_unicorn(
@@ -242,38 +250,48 @@ class ExtremeEventGenerator:
         macro_memory: float,
         coupling: float,
         sectoral_coherence: float,
+        financial_tension: float = 0.3,
     ) -> ExtremeEvent:
         """
         Generate a Unicorn (positive) event with abundance paradox.
 
-        Impact_pos(ξ, t) = ξ * exp(-(ξ - κ_abs)²/(2σ²)) - Ω * I{ξ > φ*κ_abs}
+        Paper equations:
+        Impact_pos(ξ,t) = ξ · exp(-(ξ - κ_abs(t))²/(2σ²)) - Ω(t) · I{ξ > φ·κ_abs(t)}
+        κ_abs(t) = κ_0 + γ · M_macro(t) · A_t
+        Ω(t) = ω_0 + ω_1 · T_F(t) + ω_2 · (1 - θ_t)
+
+        This captures:
+        - Dutch Disease: Resource booms → currency appreciation → deindustrialization
+        - Tech bubbles: Misallocation of capital → financial fragility
+        - Institutional incapacity: Inability to absorb windfalls → rent capture → inequality
         """
-        # Raw magnitude (positive)
+        # Raw magnitude (positive) - exponential for heavy tails
         xi = self.rng.exponential(0.05)
         xi = min(0.3, xi)  # Cap at +30% shock
 
-        # Compute absorption capacity from Equation (13)
+        # Absorption capacity: κ_abs(t) = κ_0 + γ · M_macro(t) · A_t
         kappa_abs = (
             self.params.kappa_abs_0
             + self.params.gamma_memory * macro_memory * coupling
         )
 
-        # Abundance penalty from Equation (14)
+        # Abundance penalty: Ω(t) = ω_0 + ω_1 · T_F(t) + ω_2 · (1 - θ_t)
         omega = (
             self.params.omega_0
-            + self.params.omega_1 * t_adjusted  # Financial tension contribution
+            + self.params.omega_1 * financial_tension  # T_F contribution
             + self.params.omega_2 * (1 - sectoral_coherence)  # Incoherence contribution
         )
 
-        # Effective impact with absorption and abundance paradox
+        # Absorption term: exp(-(ξ - κ_abs)²/(2σ²))
         absorption_term = np.exp(
             -((xi - kappa_abs) ** 2) / (2 * self.params.sigma_abundance ** 2)
         )
 
-        # Check for "too much success"
+        # Abundance threshold: I{ξ > φ · κ_abs}
         abundance_threshold = self.params.phi_threshold * kappa_abs
         abundance_penalty = omega if xi > abundance_threshold else 0
 
+        # Paper formula: Impact = ξ · absorption - Ω · I{...}
         effective_impact = xi * absorption_term - abundance_penalty
 
         # Determine abundance paradox effects
@@ -281,7 +299,7 @@ class ExtremeEventGenerator:
         causes_bubble = xi > 1.5 * kappa_abs and sectoral_coherence < 0.5
         causes_institutional_capture = xi > 3 * kappa_abs and macro_memory < 0.3
 
-        # Primary tension affected (usually reduced, but may trigger secondary)
+        # Determine primary tension affected
         if causes_dutch_disease:
             tension_target = "trade"  # Dutch disease affects competitiveness
         elif causes_bubble:
@@ -294,7 +312,7 @@ class ExtremeEventGenerator:
             magnitude=xi,
             effective_impact=effective_impact,
             tension_target=tension_target,
-            description=f"Positive shock: {xi:.2%} raw, {effective_impact:.2%} effective",
+            description=f"Unicorn: {xi:.2%} raw, {effective_impact:.2%} effective (κ_abs={kappa_abs:.3f})",
             causes_dutch_disease=causes_dutch_disease,
             causes_bubble=causes_bubble,
             causes_institutional_capture=causes_institutional_capture,

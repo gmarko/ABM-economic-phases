@@ -1,12 +1,19 @@
 """
 Systemic Tension Indices
 
-Implements the tension system from Section 5:
-- T_adjusted(t) = sum_i(w_i(t) * T_i(t)) / (1 + lambda * M_macro(t))
-- Five tension dimensions: Energy, Trade, Currency, Financial, Events
+Implements the structural tension system from Section 4.3 of the paper:
 
-Adaptive weights evolve according to Equation (10):
-w_i(t+1) = w_i(t) + eta * (dT_adj/dT_i * Historical_Impact_i)
+Key equation (Adjusted Systemic Tension Index):
+    T_adj(t) = Σ w_i(t) · T_i(t) / (1 + λ · M_macro(t))
+
+Five tension dimensions (Table 3):
+- T_E (Energy): (Energy imports / GDP) × Volatility_30d(oil price)
+- T_C (Trade): Restriction index × (1 - A_t) × Export concentration
+- T_D (Currency): Volatility_60d(RER) × External exposure
+- T_F (Financial): Corporate spread + Aggregate leverage × Δcredit
+- T_X (Events): Frequency × Surprise × Impact
+
+Data sources: BP, Bloomberg, OECD, WTO, BIS, IMF, FRED, GDELT
 """
 
 from dataclasses import dataclass, field
