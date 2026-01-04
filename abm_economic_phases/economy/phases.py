@@ -1,16 +1,69 @@
 """
 Economic Phases and Transitions
 
-Implements the phase space from Section 3.3 and transition mechanisms from Section 7:
+Implements the phase space from JEDC paper Section 3:
 - F_t ∈ {Activation, Expansion, Maturity, Overheating, Crisis, Recession}
-- Transition conditions from Table 5
-- Master transition equation (15): P = 1/(1 + exp(-[sum_i(beta_i * C_i(t)) - theta + epsilon_t]))
+- Smooth probabilistic transitions per Eq. 9
+- Transition index D_t capturing directional output, tensions, and memory
+- Bifurcation-like changes rather than hard threshold switches
+
+Key equations:
+- Eq. 9: P(F_{t+1} ≠ F_t) = 1 / (1 + exp(-(β^T C_t - ξ + η_t)))
+- Section 3.3: Smooth transitions resembling bifurcations
 """
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 import numpy as np
+
+
+def smooth_activation(x: float, threshold: float, sharpness: float = 10.0) -> float:
+    """
+    Smooth activation function replacing hard threshold.
+
+    Uses tanh-based sigmoid: 0.5 * (1 + tanh(sharpness * (x - threshold)))
+
+    This creates a smooth transition around the threshold, with sharpness
+    controlling how steep the transition is. As sharpness → ∞, this
+    approaches a step function.
+
+    Args:
+        x: Input value
+        threshold: Center of the transition
+        sharpness: Steepness of the transition (default 10.0)
+
+    Returns:
+        Smooth activation value in [0, 1]
+    """
+    return 0.5 * (1 + np.tanh(sharpness * (x - threshold)))
+
+
+def smooth_activation_below(x: float, threshold: float, sharpness: float = 10.0) -> float:
+    """
+    Smooth activation for condition x < threshold.
+
+    Returns 1 when x << threshold, 0 when x >> threshold.
+    """
+    return 1.0 - smooth_activation(x, threshold, sharpness)
+
+
+def smooth_and(a: float, b: float) -> float:
+    """
+    Smooth AND operation using product.
+
+    a AND b ≈ a * b for values in [0, 1]
+    """
+    return a * b
+
+
+def smooth_or(a: float, b: float) -> float:
+    """
+    Smooth OR operation using probabilistic formula.
+
+    a OR b ≈ a + b - a*b for values in [0, 1]
+    """
+    return a + b - a * b
 
 
 class EconomicPhase(Enum):
@@ -196,6 +249,81 @@ class PhaseTransitionEngine:
 
         return rules
 
+    def evaluate_condition_smooth(
+        self,
+        condition: str,
+        threshold: float,
+        conditions: PhaseConditions,
+        sharpness: float = 10.0,
+    ) -> Tuple[float, float]:
+        """
+        Evaluate a transition condition using smooth activation functions.
+
+        Per JEDC paper Section 3.3: Transitions arise as smooth bifurcation-like
+        changes rather than hard threshold switches.
+
+        Returns (smooth_activation_value, raw_condition_value).
+        The smooth_activation_value is in [0, 1] representing the degree
+        to which the condition is satisfied.
+        """
+        if condition == "g_t > threshold":
+            activation = smooth_activation(conditions.g_t, threshold, sharpness)
+            return activation, conditions.g_t
+
+        elif condition == "|a_t| < threshold":
+            abs_a = abs(conditions.a_t)
+            activation = smooth_activation_below(abs_a, threshold, sharpness)
+            return activation, -abs_a
+
+        elif condition == "t_f > threshold or t_e > threshold":
+            # Smooth OR: both tensions contribute
+            act_f = smooth_activation(conditions.t_f, threshold, sharpness)
+            act_e = smooth_activation(conditions.t_e, 0.7, sharpness)
+            activation = smooth_or(act_f, act_e)
+            return activation, max(conditions.t_f, conditions.t_e)
+
+        elif condition == "theta_t > threshold":
+            activation = smooth_activation(conditions.theta_t, threshold, sharpness)
+            return activation, conditions.theta_t
+
+        elif condition == "theta_t < threshold":
+            activation = smooth_activation_below(conditions.theta_t, threshold, sharpness)
+            return activation, -conditions.theta_t
+
+        elif condition == "t_adjusted < threshold":
+            activation = smooth_activation_below(conditions.t_adjusted, threshold, sharpness)
+            return activation, -conditions.t_adjusted
+
+        elif condition == "t_adjusted > threshold":
+            activation = smooth_activation(conditions.t_adjusted, threshold, sharpness)
+            return activation, conditions.t_adjusted
+
+        elif condition == "g_t < 0 and a_t < threshold":
+            # Smooth AND: both conditions must be satisfied
+            act_g = smooth_activation_below(conditions.g_t, 0.0, sharpness)
+            act_a = smooth_activation_below(conditions.a_t, threshold, sharpness)
+            activation = smooth_and(act_g, act_a)
+            return activation, -(conditions.g_t + conditions.a_t)
+
+        elif condition == "a_t > threshold":
+            activation = smooth_activation(conditions.a_t, threshold, sharpness)
+            return activation, conditions.a_t
+
+        elif condition == "m_macro > threshold":
+            activation = smooth_activation(conditions.m_macro, threshold, sharpness)
+            return activation, conditions.m_macro
+
+        elif condition == "capacity_slack > threshold":
+            slack = 1 - conditions.capacity_utilization
+            activation = smooth_activation(slack, threshold, sharpness)
+            return activation, slack
+
+        elif condition == "shock":
+            # External shock trigger (handled separately)
+            return 0.0, 0.0
+
+        return 0.0, 0.0
+
     def evaluate_condition(
         self,
         condition: str,
@@ -203,52 +331,16 @@ class PhaseTransitionEngine:
         conditions: PhaseConditions,
     ) -> Tuple[bool, float]:
         """
-        Evaluate a transition condition.
+        Evaluate a transition condition (legacy hard threshold version).
 
-        Returns (is_satisfied, condition_value).
+        For backwards compatibility. Prefer evaluate_condition_smooth.
         """
-        if condition == "g_t > threshold":
-            return conditions.g_t > threshold, conditions.g_t
-
-        elif condition == "|a_t| < threshold":
-            abs_a = abs(conditions.a_t)
-            return abs_a < threshold, -abs_a  # Negative so smaller is better
-
-        elif condition == "t_f > threshold or t_e > threshold":
-            val = max(conditions.t_f, conditions.t_e)
-            return val > threshold or conditions.t_e > 0.7, val
-
-        elif condition == "theta_t > threshold":
-            return conditions.theta_t > threshold, conditions.theta_t
-
-        elif condition == "theta_t < threshold":
-            return conditions.theta_t < threshold, -conditions.theta_t
-
-        elif condition == "t_adjusted < threshold":
-            return conditions.t_adjusted < threshold, -conditions.t_adjusted
-
-        elif condition == "t_adjusted > threshold":
-            return conditions.t_adjusted > threshold, conditions.t_adjusted
-
-        elif condition == "g_t < 0 and a_t < threshold":
-            satisfied = conditions.g_t < 0 and conditions.a_t < threshold
-            return satisfied, -(conditions.g_t + conditions.a_t)
-
-        elif condition == "a_t > threshold":
-            return conditions.a_t > threshold, conditions.a_t
-
-        elif condition == "m_macro > threshold":
-            return conditions.m_macro > threshold, conditions.m_macro
-
-        elif condition == "capacity_slack > threshold":
-            slack = 1 - conditions.capacity_utilization
-            return slack > threshold, slack
-
-        elif condition == "shock":
-            # External shock trigger (handled separately)
-            return False, 0.0
-
-        return False, 0.0
+        activation, raw_value = self.evaluate_condition_smooth(
+            condition, threshold, conditions
+        )
+        # Convert smooth activation to boolean using 0.5 threshold
+        is_satisfied = activation > 0.5
+        return is_satisfied, raw_value
 
     def compute_transition_probability(
         self,
